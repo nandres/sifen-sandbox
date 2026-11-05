@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Una vez por semana: la DNIT puede cambiar un XSD sin cambiarle el nombre.
+    - cron: "0 12 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Bajar los XSD oficiales y compararlos con schemas.lock.json
+        run: node scripts/download-xsd.mjs --strict
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t sifen-sandbox .
+      - name: Probar la imagen
+        run: |
+          docker run -d --name sandbox -p 3900:3900 sifen-sandbox
+          for i in $(seq 1 15); do
+            curl -sf http://127.0.0.1:3900/__sandbox/health && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:3900/__sandbox/health | grep '"simulated": true'
+          docker stop sandbox

@@ -1,0 +1,26 @@
+{
+  "source": "https://ekuatia.set.gov.py/sifen/xsd/",
+  "checkedAt": "2026-11-05",
+  "sha256": {
+    "DE_Types_v150.xsd": "99c5c2ca69eaf56781f8dd4bf6ce779e116ee807293e7eac15d1832634d29150",
+    "DE_v150.xsd": "83435e6aa50c36956e14ca3447a76c5eb551b26c75380b0314037f4b27561cb0",
+    "Departamentos_v141.xsd": "1de13902a775dce85e124e814f1777dc24ab6f80903b23d3ffe05cdfce16351c",
+    "Evento_Types_v150.xsd": "0402d380cdea0b80205af95902c4b1a3f9117778c067161e86b48ced3e09dc04",
+    "Evento_v150.xsd": "30321c18269bbf126bf54637738ad62d8e65887311027ae4c7d6026482983cfe",
+    "FE_Types_v141.xsd": "70c5a1cab165802a54d709b9a6c564ee752e5260945d25479b3b17ec289a0d85",
+    "Monedas_v150.xsd": "16520dd42b5a6e463cb9fb84c74b0a5c9c7ca8542c813636bb390accc7ccdd72",
+    "Paises_v100.xsd": "b75edd6b8ee0a10115104b7f0a5f6963485e41d3b78bcb5ef715a0763ecdc592",
+    "protProcesDE_v150.xsd": "86868979b97d9de812ee72a2c0ab60a375f1c144e4b5dda8587083cd55f14911",
+    "protProcesEventos_v141.xsd": "10cef18a54bb6fc65495eea8222f759b08ac00a7533729f61f1647db8b83134d",
+    "SIFEN_Types_v141.xsd": "b8e6d2c5b2ffd0972f123e7973f815cf11627ad8a0aba50bab42a385915e137a",
+    "siRecepDE_v150.xsd": "c4f566981645ca42afa3c98cedb85be3da4d3520051ab9c253a0f9deae99372f",
+    "Unidades_Medida_v141.xsd": "8a25e5e5decc0540cfdf6adc9fa43a3599ff1e6e5ecbb33e24a202cdf872b9fd",
+    "WS_SiConsDE_v141.xsd": "61efae1d4804e5d89831e4d1059602729a031974dd8159db90ab52912afc482f",
+    "WS_SiConsLote_v141.xsd": "204ab6aef6ceef1eeac6a6e4a8ff02ab9851b622d22671d7af9fa5ff04cbfa4b",
+    "WS_SiConsRUC_v141.xsd": "8802c027530f07d88399979c98d2bc223d785a56d8d5d27e8ad43e3dd05461b5",
+    "WS_SiRecepDE_v150.xsd": "4fc96d199902774860a2d9cfe472da860594d7fef1abc517ad8742dca52c5704",
+    "WS_SiRecepEvento_v150.xsd": "0d7b804be6743401907c974e020573f2c9f772d0bb3b4c03001ff05f965fa295",
+    "WS_SiRecepLoteDE_v141.xsd": "c5bf03098c2f4c9f8aafb0602bfd2e6f7bf12620de3648cd571d593502f52c25",
+    "xmldsig-core-schema.xsd": "f2c353a1238799c8cb2e996c9a4bb0ed9dba07a85e41c69f57e263d4b068dee6"
+  }
+}
