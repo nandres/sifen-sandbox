@@ -40,4 +40,5 @@ jobs:
             sleep 1
           done
           curl -sf http://127.0.0.1:3900/__sandbox/health | grep '"simulated": true'
+          docker exec sandbox node dist/demo.js http://127.0.0.1:3900
           docker stop sandbox

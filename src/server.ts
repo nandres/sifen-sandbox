@@ -1,6 +1,7 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 
 import { RULES, hit } from "./rules.js";
+import { SAMPLE_NOTICE, SCENARIOS, SampleGenerator } from "./sample.js";
 import {
   SERVICES,
   UnsupportedEventError,
@@ -74,6 +75,8 @@ export function createSandbox(options: SandboxOptions): Sandbox {
     checkCertificateRuc: options.checkCertificateRuc ?? false,
     lotDelayMs: options.lotDelayMs ?? 2000,
   };
+
+  const samples = new SampleGenerator();
 
   async function handleService(definition: ServiceDefinition, request: IncomingMessage, response: ServerResponse): Promise<void> {
     const service = definition.name;
@@ -176,6 +179,9 @@ export function createSandbox(options: SandboxOptions): Sandbox {
       case "GET /blocks":
         sendJson(response, 200, [...store.blocks.values()].filter((block) => block.until > store.now()));
         return;
+      case "GET /samples":
+        sendJson(response, 200, SCENARIOS.map((scenario) => samples.describe(scenario)));
+        return;
       case "GET /faults":
         sendJson(response, 200, store.faults);
         return;
@@ -226,6 +232,18 @@ export function createSandbox(options: SandboxOptions): Sandbox {
         sendJson(response, 201, entry);
         return;
       }
+    }
+
+    const sample = /^GET \/samples\/([\w-]+)$/.exec(route);
+    if (sample) {
+      const scenario = SCENARIOS.find((candidate) => candidate.name === sample[1]);
+      if (!scenario) {
+        sendJson(response, 404, { error: "Ejemplo desconocido", samples: SCENARIOS.map((candidate) => candidate.name) });
+        return;
+      }
+      response.setHeader("X-Sifen-Sandbox-Notice", SAMPLE_NOTICE);
+      send(response, 200, "application/soap+xml; charset=utf-8", samples.request(scenario, store.now()));
+      return;
     }
 
     const finish = /^POST \/lots\/([^/]+)\/finish$/.exec(route);

@@ -12,7 +12,8 @@ Para probar contra el ambiente oficial hace falta tramitar la habilitación en M
 ## Qué hace
 
 - **Atiende los 6 servicios** en las mismas rutas que SIFEN, así que alcanza con cambiar el host.
-- **Valida de verdad:** XSD oficiales, firma XMLDSig, CDC, RUC, fechas, duplicados y hash del QR.
+- **Valida de verdad:** XSD oficiales, firma XMLDSig, CDC, RUC, fechas, duplicados, hash del QR y **los cálculos de ítems, IVA y totales**.
+- **Trae ejemplos firmados listos para enviar**, para verlo funcionar antes de tener tu propia firma.
 - **Responde con los códigos del Manual Técnico y las Notas Técnicas**, en el formato de las respuestas reales, y explica el rechazo.
 - **Aplica las reglas de lotes de la DNIT:** un solo RUC y tipo por lote, bloqueo temporal del RUC por envíos duplicados y consulta hasta 48 horas.
 - **Provoca fallas a pedido:** HTTP 503, conexión cortada, demoras, SOAP Fault y códigos como `0161`.
@@ -48,13 +49,37 @@ docker run --rm -p 3900:3900 sifen-sandbox
 
 Los XSD son material de la DNIT, así que no están en el repositorio: se bajan del sitio oficial.
 
-Probalo con una consulta de RUC:
+## Probarlo en un minuto
+
+No hace falta tener firma ni QR resueltos: el simulador genera documentos firmados de ejemplo, con un certificado de prueba creado al vuelo. Con el servidor corriendo, en otra terminal:
 
 ```bash
-curl -s http://127.0.0.1:3900/de/ws/consultas/consulta-ruc.wsdl \
-  -H 'Content-Type: application/soap+xml; charset=utf-8' \
-  -d '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope"><soap:Body><rEnviConsRUC xmlns="http://ekuatia.set.gov.py/sifen/xsd"><dId>1</dId><dRUCCons>80000001</dRUCCons></rEnviConsRUC></soap:Body></soap:Envelope>'
+npm run demo
 ```
+
+```text
+ok    0260  Factura correcta
+ok    0141  Contenido cambiado después de firmar
+ok    2365  Total general que no cierra con los ítems
+ok    2501  QR calculado con otro CSC
+ok    2502  QR que apunta a la consulta de producción
+ok    1253  Dígito verificador del RUC equivocado
+ok    1050  Emisión en contingencia, todavía no habilitada
+ok    0300  Lote de 3 facturas correctas
+
+Los 8 ejemplos dieron el código esperado.
+```
+
+Con Docker, el mismo comando es `docker exec <contenedor> node dist/demo.js`.
+
+También podés pedir un ejemplo y enviarlo vos, para mirar la respuesta completa o usarlo de modelo:
+
+```bash
+curl -s http://127.0.0.1:3900/__sandbox/samples/factura-valida > factura.xml
+curl -s http://127.0.0.1:3900/de/ws/sync/recibe.wsdl -H 'Content-Type: application/soap+xml; charset=utf-8' --data-binary @factura.xml
+```
+
+`GET /__sandbox/samples` lista los ejemplos con el código que deberían dar. Cada pedido genera un número nuevo, así que no se rechazan por duplicados.
 
 ## Conectar tu sistema
 
@@ -112,6 +137,7 @@ curl -X POST http://127.0.0.1:3900/__sandbox/ruc \
 | `GET /rules` | Todas las reglas, con su fuente |
 | `GET /requests` | Historial de pedidos, con las reglas que aplicaron |
 | `GET /documents` | Documentos aprobados |
+| `GET /samples`, `GET /samples/{nombre}` | Listar los ejemplos o pedir uno listo para enviar |
 | `GET /blocks` | RUC bloqueados y el motivo |
 | `GET`, `POST /faults` | Ver o programar fallas |
 | `POST /clock` | Fijar la hora, o volver a la real con `{"now":null}` |
@@ -148,9 +174,20 @@ En este orden, y se detiene en el primer rechazo:
 | Emisor | `1253` `1250` `1252` `1264` |
 | Operación y receptor | `1216` `1213` `1300` `1335` `1314` `1334` `1331` `1333` `1321` |
 | Timbrado | `1103` `1101` `1104` |
+| Ítems: precio, descuento y total | `1850` `1851` `1859` `1852` `1861` `1853` `1857` `1858` |
+| Ítems: IVA | `1900` `1901` `1902` `1903` `1904` `1905` `1906` `1907` `1908` `1909` `1910` `1911` `1912` `1913` `1921` |
+| Totales | `2350` a `2377`, `2382` a `2388` |
 | Vigencia del certificado | `2450` |
 | QR | `2500` `2501` `2502` |
 | Aprobación | `0260`, o `1005` con observación si pasaron 72 horas desde la firma |
+
+## Cómo se revisan los montos
+
+Las fórmulas salen del Manual Técnico, con los cambios de las NT 1 y NT 13. Se calcula con punto fijo, sin coma flotante, y se acepta una diferencia de hasta 50 céntimos, como indica el manual. Un rechazo dice qué valor llegó y cuál da el cálculo:
+
+```text
+Cálculo del total general de la operación incorrecto [sandbox: dTotGralOpe es 110001; el cálculo da 110000]
+```
 
 ## Fidelidad
 
@@ -176,7 +213,8 @@ Donde los documentos se contradicen, se eligió así (más en [docs/NOTAS-TECNIC
 
 ## Qué no hace
 
-- **No valida:** cadena de confianza ni revocación del certificado, sumas de totales e IVA, catálogos de geografía o actividades, documentos asociados, ni el resto de las reglas del §12.4.
+- **No valida:** cadena de confianza ni revocación del certificado, catálogos de geografía o actividades, documentos asociados, ni el resto de las reglas del §12.4.
+- **Montos no cubiertos:** ISC, descuento global contra el porcentaje de la operación (`1860`, `1862`) y el total de autofacturas.
 - **Servicios:** falta la consulta masiva de RUC de la NT 11.
 - **Eventos:** solo la cancelación. Los demás responden HTTP 501 en vez de aprobarse sin simularlos.
 - **WSDL:** no se publica. Sirve para clientes que arman el sobre SOAP directamente.

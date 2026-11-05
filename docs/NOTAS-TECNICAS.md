@@ -18,7 +18,7 @@ La fecha es la de puesta en producción cuando la nota la declara; en las anteri
 
 | NT | Fecha | Qué cambia | Estado | Detalle | SHA-256 |
 |---|---|---|---|---|---|
-| 1 | 14/10/2019 | Aclara `1103` y fórmulas de descuentos y totales | Parcial | `1103` aplicada. Los cálculos no se simulan. | `4c47b667084d` |
+| 1 | 14/10/2019 | Aclara `1103` y fórmulas de descuentos y totales | Parcial | `1103`, `2364`, `2365`, `2383`, `2384`, `2387` y `2388` aplicadas. Sin `1860` ni `1862`. | `4c47b667084d` |
 | 2 | 16/07/2020 | Campos; elimina `1323` | No afecta | Formato en el XSD. `1323` nunca se simuló. | `6aaf4a8f4797` |
 | 3 | 18/11/2020 | Campos; elimina `1324` y `1327` | No afecta | Formato en el XSD. Esas reglas nunca se simularon. | `3d27fa591b59` |
 | 4 | 29/12/2020 | Elimina `1251` | Aplicada | El simulador ya no rechaza por no figurar como facturador. | `185619ec4bad` |
@@ -30,7 +30,7 @@ La fecha es la de puesta en producción cuando la nota la declara; en las anteri
 | 10 | 04/02/2022 | URL del QR, CSC vencido, receptor, documentos asociados | Parcial | URL sin `www`, `2501` por CSC y `1300` aplicadas. Documentos asociados no simulados. | `d261165c512c` |
 | 11 | 20/10/2022 | Servicio de consulta masiva de RUC | No simulada | El servicio no existe en el simulador. | `6abf95164f4e` |
 | 12 | 21/02/2023 | Agrega `1213` | Aplicada |  | `3f9243e48a0a` |
-| 13 | 17/06/2023 | Cálculos de IVA y base exenta | No simulada | El simulador no recalcula montos. | `5e9e85ec22f1` |
+| 13 | 17/06/2023 | Cálculos de IVA y base exenta | Aplicada | `1910`, `1911`, `1921`, `2353`, `2357` y `2359` con las fórmulas de la nota. | `5e9e85ec22f1` |
 | 14 | 08/08/2023 | Evento de nominación | No simulada | Solo se simula la cancelación. | `5320a52a9152` |
 | 15 | 21/09/2023 | Agrega `2442` | No simulada | Depende del evento de nominación. | `d41ae8e7d1fd` |
 | 16 | 22/09/2023 | Firma, certificados y TLS | Parcial | `0120`, `0140`, `0141` y `2450` aplicadas. Sin cadena de confianza, LCR ni revocación. | `6406e5e6cd4f` |

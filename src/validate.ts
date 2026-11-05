@@ -4,6 +4,7 @@ import { cdcBody, isCdcCheckDigitValid, isCdcShape, modulo11 } from "./identifie
 import { checkQr } from "./qr.js";
 import { hit, type RuleHit } from "./rules.js";
 import { verifySignature } from "./signature.js";
+import { checkAmounts } from "./totals.js";
 import type { Store } from "./store.js";
 import { HOUR, parseLocal } from "./time.js";
 import { DSIG_NS, MalformedXmlError, SIFEN_NS, XSI_NS, descendant, descendants, parseXml, text } from "./xml.js";
@@ -217,6 +218,9 @@ export async function validateDocument(rde: string, ctx: ValidationContext, opti
   if (operation) return rejected(operation, cdc, digest);
   const timbrado = checkTimbrado(de, ctx);
   if (timbrado) return rejected(timbrado, cdc, digest);
+
+  const amounts = checkAmounts(de);
+  if (amounts) return rejected(amounts, cdc, digest);
 
   if (certificate && signed !== undefined && (signed < certificate.validFrom || signed > certificate.validTo)) {
     return rejected(hit("2450", "Certificado expirado o todavía no vigente a la fecha de la firma"), cdc, digest);
