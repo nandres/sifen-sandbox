@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { unzipSync, strFromU8 } from "fflate";
 import type { Element } from "@xmldom/xmldom";
 
@@ -71,7 +73,7 @@ export function rejectionBody(service: ServiceName, rejection: RuleHit, now: num
     case "siRecepLoteDE":
       return element(
         "rResEnviLoteDe",
-        `<dFecProc>${date}</dFecProc><dCodRes>${rejection.code}</dCodRes><dMsgRes>${message(rejection)}</dMsgRes><dTpoProces>1</dTpoProces>`,
+        `<dFecProc>${date}</dFecProc><dCodRes>${rejection.code}</dCodRes><dMsgRes>${message(rejection)}</dMsgRes><dTpoProces>0</dTpoProces>`,
       );
     case "siResultLoteDE":
       return element(
@@ -111,18 +113,31 @@ async function recibe(raw: string, dId: string | undefined, ctx: SandboxContext)
   const outcome = await validateDocument(withNamespace(rde), ctx, { sync: true });
   return {
     body: element("rRetEnviDe", protDe(outcome, now)),
-    log: { ...idOf(dId), ...(outcome.cdc ? { cdc: outcome.cdc } : {}), status: outcome.status, results: outcome.results },
+    log: {
+      ...idOf(dId),
+      ...(outcome.cdc ? { cdc: outcome.cdc } : {}),
+      status: outcome.status,
+      results: outcome.results,
+      ...(outcome.notes ? { notes: outcome.notes } : {}),
+    },
   };
 }
 
 const idOf = (dId: string | undefined): { dId?: string } => (dId ? { dId } : {});
 
-function decodeLot(payload: Element): { documents: string[] } | { rejection: RuleHit } {
+const COMPRESSED_LIMIT = 1000 * KB;
+const fieldOf = (xml: string, name: string): string => new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1] ?? "";
+
+function decodeLot(payload: Element): { documents: string[]; hash: string } | { rejection: RuleHit } {
   const encoded = text(payload, "xDE")?.replace(/\s+/g, "") ?? "";
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return { rejection: hit("0301", "xDE no es Base64") };
   let files;
   try {
-    files = unzipSync(new Uint8Array(Buffer.from(encoded, "base64")));
+    const compressed = Buffer.from(encoded, "base64");
+    if (compressed.length > COMPRESSED_LIMIT) {
+      return { rejection: hit("0301", "El archivo comprimido supera los 1000 KB") };
+    }
+    files = unzipSync(new Uint8Array(compressed));
   } catch {
     return { rejection: hit("0301", "xDE no es un archivo ZIP válido") };
   }
@@ -133,7 +148,35 @@ function decodeLot(payload: Element): { documents: string[] } | { rejection: Rul
   const documents = rawElements(xml, "rDE").map(withNamespace);
   if (documents.length === 0) return { rejection: hit("0301", "El lote no contiene DE") };
   if (documents.length > 50) return { rejection: hit("0301", `El lote tiene ${documents.length} DE; el máximo es 50`) };
-  return { documents };
+  return { documents, hash: createHash("sha256").update(encoded).digest("hex") };
+}
+
+/** Motivos de rechazo y de bloqueo de la Guía, p. 6 y 7. */
+function checkLotRules(documents: string[], hash: string, ctx: SandboxContext): RuleHit | undefined {
+  const { store } = ctx;
+  const rucs = new Set(documents.map((doc) => fieldOf(doc, "dRucEm")));
+  if (rucs.size > 1) return hit("0301", "Un lote debe tener un solo RUC emisor");
+  if (new Set(documents.map((doc) => fieldOf(doc, "iTiDE"))).size > 1) return hit("0301", "Un lote debe tener un solo tipo de documento");
+
+  const ruc = [...rucs][0] ?? "";
+  const active = store.activeBlock(ruc);
+  if (active) {
+    const minutes = Math.ceil((active.until - store.now()) / 60_000);
+    return hit("0301", `RUC ${ruc} bloqueado ${minutes} minutos más por: ${active.reason}`);
+  }
+
+  const cdcs = documents.map((doc) => /<DE[^>]*\sId="(\d+)"/.exec(doc)?.[1] ?? "");
+  const blockFor = (reason: string): RuleHit => {
+    const block = store.block(ruc, reason);
+    return hit("0301", `${reason}: RUC bloqueado por ${Math.round((block.until - store.now()) / 60_000)} minutos`);
+  };
+  if (store.lotHashes.has(hash)) return blockFor("se envió varias veces el mismo lote");
+  if (new Set(cdcs).size !== cdcs.length) return blockFor("el mismo CDC está varias veces en el lote");
+  const inProgress = [...store.lots.values()].filter((lot) => !lot.results && Date.now() < lot.readyAt);
+  if (cdcs.some((cdc) => inProgress.some((lot) => lot.cdcs.includes(cdc)))) {
+    return blockFor("el mismo CDC está en otro lote todavía en procesamiento");
+  }
+  return undefined;
 }
 
 function recibeLote(payload: Element, dId: string | undefined, ctx: SandboxContext): ServiceResult {
@@ -146,14 +189,28 @@ function recibeLote(payload: Element, dId: string | undefined, ctx: SandboxConte
       log: { ...idOf(dId), status: "Rechazado", results: [decoded.rejection] },
     };
   }
+  const refused = checkLotRules(decoded.documents, decoded.hash, ctx);
+  if (refused) {
+    return {
+      body: rejectionBody("siRecepLoteDE", refused, now),
+      log: { ...idOf(dId), status: "Rechazado", results: [refused] },
+    };
+  }
   const id = store.nextLotId();
-  store.lots.set(id, { id, documents: decoded.documents, receivedAt: Date.now(), readyAt: Date.now() + ctx.lotDelayMs });
+  store.lotHashes.add(decoded.hash);
+  store.lots.set(id, {
+    id,
+    documents: decoded.documents,
+    cdcs: decoded.documents.map((doc) => /<DE[^>]*\sId="(\d+)"/.exec(doc)?.[1] ?? ""),
+    receivedAt: now,
+    readyAt: Date.now() + ctx.lotDelayMs,
+  });
   const received = hit("0300");
   return {
     body: element(
       "rResEnviLoteDe",
       `<dFecProc>${formatProcessDate(now)}</dFecProc><dCodRes>${received.code}</dCodRes><dMsgRes>${message(received)}</dMsgRes>` +
-        `<dProtConsLote>${id}</dProtConsLote><dTpoProces>${Math.max(1, Math.round(ctx.lotDelayMs / 1000))}</dTpoProces>`,
+        `<dProtConsLote>${id}</dProtConsLote><dTpoProces>0</dTpoProces>`,
     ),
     log: { ...idOf(dId), status: "Aprobado", results: [received] },
   };
@@ -165,12 +222,6 @@ function processLot(lot: StoredLot, ctx: SandboxContext): Promise<void> {
   const running = lotProcessing.get(lot);
   if (running) return running;
   const work = (async () => {
-    const types = new Set(lot.documents.map((doc) => /<iTiDE>(\d+)<\/iTiDE>/.exec(doc)?.[1] ?? ""));
-    if (types.size > 1) {
-      lot.code = "0363";
-      lot.results = [];
-      return;
-    }
     const results: LotItem[] = [];
     // De a uno, para que dos DE del mismo lote se puedan detectar como duplicados.
     for (const document of lot.documents) {
@@ -182,7 +233,6 @@ function processLot(lot: StoredLot, ctx: SandboxContext): Promise<void> {
         results: outcome.results,
       });
     }
-    lot.code = "0362";
     lot.results = results;
   })();
   lotProcessing.set(lot, work);
@@ -191,17 +241,22 @@ function processLot(lot: StoredLot, ctx: SandboxContext): Promise<void> {
 
 async function consultaLote(payload: Element, dId: string | undefined, ctx: SandboxContext): Promise<ServiceResult> {
   const now = ctx.store.now();
-  const lot = ctx.store.lots.get(text(payload, "dProtConsLote") ?? "");
+  // Guía p. 6: si se perdió el número de lote, se puede consultar con un CDC que iba en él.
+  const number = text(payload, "dProtConsLote");
+  const byCdc = text(payload, "dCDC");
+  const lot = number
+    ? ctx.store.lots.get(number)
+    : [...ctx.store.lots.values()].find((candidate) => byCdc !== undefined && candidate.cdcs.includes(byCdc));
   const finish = (rejection: RuleHit): ServiceResult => ({
     body: rejectionBody("siResultLoteDE", rejection, now),
     log: { ...idOf(dId), status: rejection.effect === "R" ? "Rechazado" : "Aprobado", results: [rejection] },
   });
   if (!lot) return finish(hit("0360"));
-  if (Date.now() < lot.readyAt) return finish(hit("0361"));
+  if (now - lot.receivedAt > 48 * HOUR) return finish(hit("0364", "Pasaron 48 horas: consultá cada CDC con siConsDE"));
+  if (Date.now() < lot.readyAt) return finish({ ...hit("0361"), message: `Lote {${lot.id}} en procesamiento` });
 
   await processLot(lot, ctx);
-  const result = hit(lot.code ?? "0361");
-  if (result.code !== "0362") return finish(result);
+  const result = { ...hit("0362"), message: `Procesamiento de lote {${lot.id}} concluido` };
 
   const items = (lot.results ?? [])
     .map(

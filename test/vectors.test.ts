@@ -40,11 +40,11 @@ describe("ejemplo del manual, §13.8.4", () => {
     expect(isCdcCheckDigitValid(MANUAL.cdc)).toBe(true);
   });
 
-  it("aprueba la URL con y sin www", () => {
+  it("aprueba la URL sin www y rechaza la versión con www, que la NT 10 dejó sin efecto", () => {
     const cscs = new Map([["0001", MANUAL.csc]]);
     const url = `${QR_BASE_TEST}${MANUAL.params}&cHashQR=${MANUAL.hash}`;
     expect(checkQr(url, expected, cscs)).toBeUndefined();
-    expect(checkQr(url.replace("https://ekuatia", "https://www.ekuatia"), expected, cscs)).toBeUndefined();
+    expect(checkQr(url.replace("https://ekuatia", "https://www.ekuatia"), expected, cscs)?.code).toBe("2502");
   });
 });
 

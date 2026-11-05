@@ -38,14 +38,13 @@ export function qrHash(parameters: string, csc: string): string {
 
 export function checkQr(url: string | undefined, expected: QrExpected, cscs: ReadonlyMap<string, string>): RuleHit | undefined {
   if (!url) return hit("2500", "Falta dCarQR");
-  // El manual da la dirección sin www en §13.8.2 y con www en §13.8.4.4: se aceptan las dos.
-  const normalized = url.replace("https://www.ekuatia.", "https://ekuatia.");
-  if (normalized.startsWith(QR_BASE_PROD)) {
+  // La NT 10 fija la dirección sin www y deja sin efecto el ejemplo con www del manual (§13.8.4.4).
+  if (url.startsWith(QR_BASE_PROD)) {
     return hit("2502", "El QR apunta a la consulta de producción; en pruebas va a consultas-test");
   }
-  if (!normalized.startsWith(QR_BASE_TEST)) return hit("2502", `La URL debe empezar con ${QR_BASE_TEST}`);
+  if (!url.startsWith(QR_BASE_TEST)) return hit("2502", `La URL debe empezar con ${QR_BASE_TEST}`);
 
-  const query = normalized.slice(QR_BASE_TEST.length);
+  const query = url.slice(QR_BASE_TEST.length);
   const marker = "&cHashQR=";
   const position = query.lastIndexOf(marker);
   if (position < 0) return hit("2501", "Falta cHashQR");
@@ -54,7 +53,8 @@ export function checkQr(url: string | undefined, expected: QrExpected, cscs: Rea
 
   const cscId = /(?:^|&)IdCSC=([^&]*)/.exec(parameters)?.[1] ?? "";
   const csc = cscs.get(cscId) ?? cscs.get(cscId.replace(/^0+/, ""));
-  if (csc === undefined) return hit("2501", `IdCSC "${cscId}" no está cargado en el simulador`);
+  // NT 10: un CSC que no está vigente también da 2501.
+  if (csc === undefined) return hit("2501", `IdCSC "${cscId}" no está vigente en el simulador`);
 
   const wanted = qrParameters(expected, cscId);
   if (parameters !== wanted) return hit("2500", `Se esperaba: ${wanted}`.slice(0, 500));

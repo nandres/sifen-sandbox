@@ -1,3 +1,4 @@
+import { strToU8, zipSync } from "fflate";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { SchemaSet } from "../src/xsd.js";
@@ -7,6 +8,7 @@ import {
   XSD_DIR,
   buildCancelEvent,
   buildDocument,
+  consultaLotePorCdcRequest,
   consultaLoteRequest,
   consultaRequest,
   consultaRucRequest,
@@ -36,7 +38,7 @@ beforeEach(() => {
   sandbox.sandbox.store.setClock(NOW_ISO);
 });
 
-const inner = (body: string, root: string): string => new RegExp(`<${root}[\\s\\S]*</${root}>`).exec(body)?.[0] ?? "";
+const inner = (body: string, root: string): string => new RegExp(`<ns2:${root}[\\s\\S]*</ns2:${root}>`).exec(body)?.[0] ?? "";
 const approve = async (numero = "0000001"): Promise<string> => {
   const { xml, cdc } = buildDocument(identity, { numero });
   const response = await sandbox.post(PATHS.recibe, recibeRequest(xml));
@@ -66,10 +68,12 @@ describe("siRecepLoteDE y siResultLoteDE", () => {
 
       const pending = await slow.post(PATHS.consultaLote, consultaLoteRequest(lot));
       expect(field(pending.body, "dCodResLot")).toBe("0361");
+      expect(field(pending.body, "dMsgResLot")).toBe(`Lote {${lot}} en procesamiento`);
 
       await slow.control(`/lots/${lot}/finish`, {});
       const done = await slow.post(PATHS.consultaLote, consultaLoteRequest(lot));
       expect(field(done.body, "dCodResLot")).toBe("0362");
+      expect(field(done.body, "dMsgResLot")).toBe(`Procesamiento de lote {${lot}} concluido`);
       expect(fields(done.body, "id")).toEqual([good.cdc, bad.cdc]);
       expect(fields(done.body, "dEstRes")).toEqual(["Aprobado", "Rechazado"]);
       expect(fields(done.body, "dCodRes")).toEqual(["0260", "0141"]);
@@ -82,11 +86,111 @@ describe("siRecepLoteDE y siResultLoteDE", () => {
     }
   });
 
-  it("detecta duplicados dentro del mismo lote", async () => {
+  it("rechaza 1001 un CDC ya aprobado en un lote anterior", async () => {
     const { xml } = buildDocument(identity);
-    const { lot } = await send([xml, xml]);
-    const done = await sandbox.post(PATHS.consultaLote, consultaLoteRequest(lot));
-    expect(fields(done.body, "dCodRes")).toEqual(["0260", "1001"]);
+    const first = await send([xml]);
+    await sandbox.post(PATHS.consultaLote, consultaLoteRequest(first.lot));
+    const repeated = `${xml}`;
+    const second = await send([repeated, buildDocument(identity, { numero: "0000002" }).xml]);
+    const done = await sandbox.post(PATHS.consultaLote, consultaLoteRequest(second.lot));
+    expect(fields(done.body, "dCodRes")).toEqual(["1001", "0260"]);
+  });
+
+  describe("bloqueo del RUC (Guía p. 6 y 7)", () => {
+    it("0301 y bloqueo si un CDC se repite en el lote", async () => {
+      const { xml } = buildDocument(identity);
+      const { code, body } = await send([xml, xml]);
+      expect(code).toBe("0301");
+      expect(field(body, "dMsgRes")).toContain("bloqueado por 10 minutos");
+      expect((await sandbox.control("/blocks")).json[0].ruc).toBe("80000001");
+    });
+
+    it("rechaza mientras dura y vuelve a aceptar al vencer", async () => {
+      const { xml } = buildDocument(identity);
+      await send([xml, xml]);
+      const other = buildDocument(identity, { numero: "0000002" }).xml;
+      const blocked = await send([other]);
+      expect(blocked.code).toBe("0301");
+      expect(field(blocked.body, "dMsgRes")).toContain("bloqueado 10 minutos más");
+
+      sandbox.sandbox.store.setClock("2026-11-05T10:10:01-03:00");
+      expect((await send([other])).code).toBe("0300");
+    });
+
+    it("alarga el bloqueo al reincidir", async () => {
+      const { xml } = buildDocument(identity);
+      await send([xml, xml]);
+      sandbox.sandbox.store.setClock("2026-11-05T10:10:01-03:00");
+      const { body } = await send([xml, xml, xml]);
+      expect(field(body, "dMsgRes")).toContain("bloqueado por 20 minutos");
+    });
+
+    it("no afecta a otro RUC", async () => {
+      const { xml } = buildDocument(identity);
+      await send([xml, xml]);
+      expect((await send([buildDocument(identity, { ruc: "80000005" }).xml])).code).toBe("0300");
+    });
+
+    it("bloquea si se reenvía el mismo lote", async () => {
+      const { xml } = buildDocument(identity);
+      expect((await send([xml])).code).toBe("0300");
+      const { code, body } = await send([xml]);
+      expect(code).toBe("0301");
+      expect(field(body, "dMsgRes")).toContain("mismo lote");
+    });
+
+    it("bloquea si el CDC está en otro lote todavía en procesamiento", async () => {
+      const slow = await start(60_000);
+      try {
+        const first = buildDocument(identity).xml;
+        const other = buildDocument(identity, { numero: "0000002" }).xml;
+        expect(field((await slow.post(PATHS.lote, loteRequest([first]))).body, "dCodRes")).toBe("0300");
+        const second = await slow.post(PATHS.lote, loteRequest([first, other]));
+        expect(field(second.body, "dCodRes")).toBe("0301");
+        expect(field(second.body, "dMsgRes")).toContain("otro lote");
+      } finally {
+        await slow.close();
+      }
+    });
+  });
+
+  it("0301 si mezcla RUC emisores", async () => {
+    const first = buildDocument(identity).xml;
+    const second = buildDocument(identity, { ruc: "80000005" }).xml;
+    const { code, body } = await send([first, second]);
+    expect(code).toBe("0301");
+    expect(field(body, "dMsgRes")).toContain("un solo RUC");
+  });
+
+  it("acepta rLoteDE sin namespace, como el ejemplo de la Guía", async () => {
+    const { xml } = buildDocument(identity);
+    const request = loteRequest([xml]).replace(/<xDE>([^<]+)<\/xDE>/, (_all) => {
+      const zipped = zipSync({ "lote.xml": strToU8(`<rLoteDE>${xml}</rLoteDE>`) });
+      return `<xDE>${Buffer.from(zipped).toString("base64")}</xDE>`;
+    });
+    expect(field((await sandbox.post(PATHS.lote, request)).body, "dCodRes")).toBe("0300");
+  });
+
+  it("consulta el lote con un CDC si se perdió el número (Guía p. 6)", async () => {
+    const { xml, cdc } = buildDocument(identity);
+    await send([xml]);
+    const done = await sandbox.post(PATHS.consultaLote, consultaLotePorCdcRequest(cdc));
+    expect(field(done.body, "dCodResLot")).toBe("0362");
+    expect(fields(done.body, "id")).toEqual([cdc]);
+  });
+
+  it("0364 si se consulta después de 48 horas (Guía p. 10)", async () => {
+    const { lot } = await send([buildDocument(identity).xml]);
+    sandbox.sandbox.store.setClock("2026-11-07T10:00:01-03:00");
+    const late = await sandbox.post(PATHS.consultaLote, consultaLoteRequest(lot));
+    expect(field(late.body, "dCodResLot")).toBe("0364");
+  });
+
+  it("0301 si el comprimido supera los 1000 KB (Guía p. 6)", async () => {
+    const big = Buffer.alloc(1_000_001, 1).toString("base64");
+    const response = await sandbox.post(PATHS.lote, envelope(`<rEnvioLote xmlns="http://ekuatia.set.gov.py/sifen/xsd"><dId>1</dId><xDE>${big}</xDE></rEnvioLote>`));
+    expect(field(response.body, "dCodRes")).toBe("0301");
+    expect(field(response.body, "dMsgRes")).toContain("1000 KB");
   });
 
   it("el lote no aplica la restricción 1264 de los servicios síncronos", async () => {
@@ -96,12 +200,12 @@ describe("siRecepLoteDE y siResultLoteDE", () => {
     expect(fields(done.body, "dCodRes")).toEqual(["0260"]);
   });
 
-  it("0363 si mezcla tipos de documento", async () => {
+  it("0301 si mezcla tipos de documento (Guía p. 6)", async () => {
     const first = buildDocument(identity).xml;
     const second = buildDocument(identity, { numero: "0000002", tipo: "4", descTipo: "Autofactura electrónica" }).xml;
-    const { lot } = await send([first, second]);
-    const done = await sandbox.post(PATHS.consultaLote, consultaLoteRequest(lot));
-    expect(field(done.body, "dCodResLot")).toBe("0363");
+    const { code, body } = await send([first, second]);
+    expect(code).toBe("0301");
+    expect(field(body, "dMsgRes")).toContain("un solo tipo");
   });
 
   it("0301 si tiene más de 50 documentos", async () => {
@@ -267,6 +371,7 @@ describe("API de control", () => {
     expect(json[0].service).toBe("siRecepDE");
     expect(json[0].results[0].code).toBe("0141");
     expect(json[0].results[0].source).toContain("MT §12.2.5");
+    expect(json[0].results[0].source).toContain("NT 16");
   });
 
   it("reset borra los documentos", async () => {
@@ -279,7 +384,7 @@ describe("API de control", () => {
   it("todas las reglas citan su fuente", async () => {
     const { json } = await sandbox.control("/rules");
     expect(json.length).toBeGreaterThan(40);
-    for (const rule of json) expect(rule.source).toMatch(/^MT /);
+    for (const rule of json) expect(rule.source).toMatch(/^(MT|NT|Guía) /);
   });
 
   it("una ruta desconocida lista los servicios", async () => {

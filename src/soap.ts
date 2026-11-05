@@ -38,7 +38,9 @@ export function soapFault(soapNamespace: string, reason: string): string {
   return soapResponse(soapNamespace, fault);
 }
 
-export const element = (name: string, inner: string): string => `<${name} xmlns="${SIFEN_NS}">${inner}</${name}>`;
+/** Como en las respuestas reales de la Guía de la DNIT: todo con el prefijo ns2. */
+export const element = (name: string, inner: string): string =>
+  `<ns2:${name} xmlns:ns2="${SIFEN_NS}">${inner.replace(/<(\/?)([A-Za-z])/g, "<$1ns2:$2")}</ns2:${name}>`;
 
 export function contentTypeFor(soapNamespace: string): string {
   return soapNamespace === SOAP11 ? "text/xml; charset=utf-8" : "application/soap+xml; charset=utf-8";

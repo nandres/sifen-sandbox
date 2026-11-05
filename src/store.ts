@@ -40,10 +40,11 @@ export interface LotItem {
 export interface StoredLot {
   id: string;
   documents: string[];
+  cdcs: string[];
+  /** Hora del reloj del simulador, para el plazo de consulta de 48 horas. */
   receivedAt: number;
   readyAt: number;
   results?: LotItem[];
-  code?: string;
 }
 
 export type FaultKind = "http" | "delay" | "drop" | "soapFault" | "code";
@@ -66,7 +67,15 @@ export interface RequestLogEntry {
   cdc?: string;
   status?: string;
   results: RuleHit[];
+  notes?: string[];
   fault?: FaultKind;
+}
+
+export interface RucBlock {
+  ruc: string;
+  until: number;
+  strikes: number;
+  reason: string;
 }
 
 const MAX_LOG = 500;
@@ -76,6 +85,8 @@ export class Store {
   documents = new Map<string, StoredDocument>();
   timbradoKeys = new Map<string, string>();
   lots = new Map<string, StoredLot>();
+  lotHashes = new Set<string>();
+  blocks = new Map<string, RucBlock>();
   rucs = new Map<string, RucEntry>();
   timbrados = new Map<string, TimbradoEntry>();
   faults: Fault[] = [];
@@ -89,6 +100,8 @@ export class Store {
     this.documents.clear();
     this.timbradoKeys.clear();
     this.lots.clear();
+    this.lotHashes.clear();
+    this.blocks.clear();
     this.rucs.clear();
     this.timbrados.clear();
     this.faults = [];
@@ -138,6 +151,19 @@ export class Store {
         existe: true,
       }
     );
+  }
+
+  /** La Guía habla de 10 a 60 minutos según la reincidencia; el escalón de 10 es una suposición. */
+  block(ruc: string, reason: string): RucBlock {
+    const strikes = (this.blocks.get(ruc)?.strikes ?? 0) + 1;
+    const entry = { ruc, reason, strikes, until: this.now() + Math.min(strikes * 10, 60) * 60_000 };
+    this.blocks.set(ruc, entry);
+    return entry;
+  }
+
+  activeBlock(ruc: string): RucBlock | undefined {
+    const entry = this.blocks.get(ruc);
+    return entry && entry.until > this.now() ? entry : undefined;
   }
 
   addFault(fault: Omit<Fault, "id">): Fault {

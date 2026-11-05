@@ -16,7 +16,7 @@ import { SchemaSet } from "./xsd.js";
 
 export interface SandboxOptions {
   xsdDirectory: string;
-  /** IdCSC → CSC. El predeterminado es el del ejemplo del manual (§13.8.3). */
+  /** IdCSC → CSC. Los predeterminados son los genéricos de la Guía de Pruebas de la DNIT. */
   cscs?: Record<string, string>;
   lotDelayMs?: number;
   checkCertificateRuc?: boolean;
@@ -69,7 +69,8 @@ export function createSandbox(options: SandboxOptions): Sandbox {
   const ctx: SandboxContext = {
     store,
     schemas: new SchemaSet(options.xsdDirectory),
-    cscs: new Map(Object.entries(options.cscs ?? { "0001": "ABCD0000000000000000000000000000" })),
+    // Los CSC genéricos de la Guía de Pruebas de la DNIT (§2).
+    cscs: new Map(Object.entries(options.cscs ?? { "0001": "ABCD0000000000000000000000000000", "0002": "EFGH0000000000000000000000000000" })),
     checkCertificateRuc: options.checkCertificateRuc ?? false,
     lotDelayMs: options.lotDelayMs ?? 2000,
   };
@@ -171,6 +172,9 @@ export function createSandbox(options: SandboxOptions): Sandbox {
           200,
           [...store.documents.values()].map(({ xml: _xml, ...document }) => document),
         );
+        return;
+      case "GET /blocks":
+        sendJson(response, 200, [...store.blocks.values()].filter((block) => block.until > store.now()));
         return;
       case "GET /faults":
         sendJson(response, 200, store.faults);

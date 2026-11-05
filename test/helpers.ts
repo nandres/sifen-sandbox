@@ -24,13 +24,13 @@ export interface Identity {
 }
 
 /** Certificado autofirmado generado en cada corrida: el repositorio no guarda claves. */
-export function createIdentity(commonName = "PRUEBA"): Identity {
+export function createIdentity(commonName = "PRUEBA", validity = { from: "2020-01-01", to: "2040-01-01" }): Identity {
   const keys = forge.pki.rsa.generateKeyPair(2048);
   const certificate = forge.pki.createCertificate();
   certificate.publicKey = keys.publicKey;
   certificate.serialNumber = "01";
-  certificate.validity.notBefore = new Date("2020-01-01");
-  certificate.validity.notAfter = new Date("2040-01-01");
+  certificate.validity.notBefore = new Date(validity.from);
+  certificate.validity.notAfter = new Date(validity.to);
   const attributes = [{ name: "commonName", value: commonName }];
   certificate.setSubject(attributes);
   certificate.setIssuer(attributes);
@@ -54,6 +54,10 @@ export interface DocumentOptions {
   cscId?: string;
   csc?: string;
   qrBase?: string;
+  /** Reemplaza gDatRec; va con qrReceptor. */
+  receiverXml?: string;
+  qrReceptor?: string;
+  total?: string;
   /** Sustituye el CDC calculado. */
   cdc?: string;
   /** Devuelve el XML sin firmar para alterarlo a mano. */
@@ -94,14 +98,14 @@ export function buildDocument(identity: Identity, options: DocumentOptions = {})
     `<gOpeCom><iTipTra>1</iTipTra><dDesTipTra>Venta de mercadería</dDesTipTra><iTImp>1</iTImp><dDesTImp>IVA</dDesTImp><cMoneOpe>PYG</cMoneOpe><dDesMoneOpe>Guarani</dDesMoneOpe></gOpeCom>` +
     `<gEmis><dRucEm>${ruc}</dRucEm><dDVEmi>${dv}</dDVEmi><iTipCont>2</iTipCont><dNomEmi>EMPRESA DE PRUEBA S.A.</dNomEmi><dDirEmi>CALLE PRUEBA 123</dDirEmi><dNumCas>123</dNumCas><cDepEmi>1</cDepEmi><dDesDepEmi>CAPITAL</dDesDepEmi><cCiuEmi>1</cCiuEmi><dDesCiuEmi>ASUNCION (DISTRITO)</dDesCiuEmi><dTelEmi>021000000</dTelEmi><dEmailE>prueba@example.com</dEmailE>` +
     `<gActEco><cActEco>62010</cActEco><dDesActEco>DESARROLLO DE SOFTWARE</dDesActEco></gActEco></gEmis>` +
-    `<gDatRec><iNatRec>1</iNatRec><iTiOpe>1</iTiOpe><cPaisRec>PRY</cPaisRec><dDesPaisRe>Paraguay</dDesPaisRe><iTiContRec>2</iTiContRec><dRucRec>80000002</dRucRec><dDVRec>${modulo11("80000002")}</dDVRec><dNomRec>CLIENTE DE PRUEBA S.A.</dNomRec></gDatRec>` +
+    (options.receiverXml ?? `<gDatRec><iNatRec>1</iNatRec><iTiOpe>1</iTiOpe><cPaisRec>PRY</cPaisRec><dDesPaisRe>Paraguay</dDesPaisRe><iTiContRec>2</iTiContRec><dRucRec>80000002</dRucRec><dDVRec>${modulo11("80000002")}</dDVRec><dNomRec>CLIENTE DE PRUEBA S.A.</dNomRec></gDatRec>`) +
     `</gDatGralOpe>` +
     `<gDtipDE><gCamFE><iIndPres>1</iIndPres><dDesIndPres>Operación presencial</dDesIndPres></gCamFE>` +
     `<gCamCond><iCondOpe>1</iCondOpe><dDCondOpe>Contado</dDCondOpe><gPaConEIni><iTiPago>1</iTiPago><dDesTiPag>Efectivo</dDesTiPag><dMonTiPag>110000</dMonTiPag><cMoneTiPag>PYG</cMoneTiPag><dDMoneTiPag>Guarani</dDMoneTiPag></gPaConEIni></gCamCond>` +
     `<gCamItem><dCodInt>A1</dCodInt><dDesProSer>SERVICIO DE PRUEBA</dDesProSer><cUniMed>77</cUniMed><dDesUniMed>UNI</dDesUniMed><dCantProSer>1</dCantProSer>` +
     `<gValorItem><dPUniProSer>110000</dPUniProSer><dTotBruOpeItem>110000</dTotBruOpeItem><gValorRestaItem><dDescItem>0</dDescItem><dDescGloItem>0</dDescGloItem><dAntPreUniIt>0</dAntPreUniIt><dAntGloPreUniIt>0</dAntGloPreUniIt><dTotOpeItem>110000</dTotOpeItem></gValorRestaItem></gValorItem>` +
     `<gCamIVA><iAfecIVA>1</iAfecIVA><dDesAfecIVA>Gravado IVA</dDesAfecIVA><dPropIVA>100</dPropIVA><dTasaIVA>10</dTasaIVA><dBasGravIVA>100000</dBasGravIVA><dLiqIVAItem>10000</dLiqIVAItem><dBasExe>0</dBasExe></gCamIVA></gCamItem></gDtipDE>` +
-    `<gTotSub><dSubExe>0</dSubExe><dSubExo>0</dSubExo><dSub5>0</dSub5><dSub10>110000</dSub10><dTotOpe>110000</dTotOpe><dTotDesc>0</dTotDesc><dTotDescGlotem>0</dTotDescGlotem><dTotAntItem>0</dTotAntItem><dTotAnt>0</dTotAnt><dPorcDescTotal>0</dPorcDescTotal><dDescTotal>0</dDescTotal><dAnticipo>0</dAnticipo><dRedon>0</dRedon><dTotGralOpe>110000</dTotGralOpe><dIVA5>0</dIVA5><dIVA10>10000</dIVA10><dLiqTotIVA5>0</dLiqTotIVA5><dLiqTotIVA10>0</dLiqTotIVA10><dTotIVA>10000</dTotIVA><dBaseGrav5>0</dBaseGrav5><dBaseGrav10>100000</dBaseGrav10><dTBasGraIVA>100000</dTBasGraIVA></gTotSub>` +
+    `<gTotSub><dSubExe>0</dSubExe><dSubExo>0</dSubExo><dSub5>0</dSub5><dSub10>110000</dSub10><dTotOpe>110000</dTotOpe><dTotDesc>0</dTotDesc><dTotDescGlotem>0</dTotDescGlotem><dTotAntItem>0</dTotAntItem><dTotAnt>0</dTotAnt><dPorcDescTotal>0</dPorcDescTotal><dDescTotal>0</dDescTotal><dAnticipo>0</dAnticipo><dRedon>0</dRedon><dTotGralOpe>${options.total ?? "110000"}</dTotGralOpe><dIVA5>0</dIVA5><dIVA10>10000</dIVA10><dLiqTotIVA5>0</dLiqTotIVA5><dLiqTotIVA10>0</dLiqTotIVA10><dTotIVA>10000</dTotIVA><dBaseGrav5>0</dBaseGrav5><dBaseGrav10>100000</dBaseGrav10><dTBasGraIVA>100000</dTBasGraIVA></gTotSub>` +
     `</DE>`;
 
   let unsigned = `<rDE xmlns="${NS}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="${NS} siRecepDE_v150.xsd"><dVerFor>150</dVerFor>${unsignedDe}</rDE>`;
@@ -114,8 +118,8 @@ export function buildDocument(identity: Identity, options: DocumentOptions = {})
     {
       cdc,
       fechaEmision: emitted,
-      receptor: "dRucRec=80000002",
-      totalGeneral: "110000",
+      receptor: options.qrReceptor ?? "dRucRec=80000002",
+      totalGeneral: options.total ?? "110000",
       totalIva: "10000",
       items: 1,
       digest,
@@ -166,6 +170,9 @@ export const loteRequest = (documents: string[], dId = "2"): string => {
 
 export const consultaLoteRequest = (lot: string): string =>
   envelope(`<rEnviConsLoteDe xmlns="${NS}"><dId>3</dId><dProtConsLote>${lot}</dProtConsLote></rEnviConsLoteDe>`);
+
+export const consultaLotePorCdcRequest = (cdc: string): string =>
+  envelope(`<rEnviConsLoteDe xmlns="${NS}"><dId>3</dId><dCDC>${cdc}</dCDC></rEnviConsLoteDe>`);
 
 export const consultaRequest = (cdc: string): string =>
   envelope(`<rEnviConsDeRequest xmlns="${NS}"><dId>4</dId><dCDC>${cdc}</dCDC></rEnviConsDeRequest>`);
@@ -219,5 +226,5 @@ export async function start(lotDelayMs = 0): Promise<Running> {
 }
 
 /** Saca el contenido de un campo de la respuesta. */
-export const field = (xml: string, name: string): string | undefined => new RegExp(`<${name}>([^<]*)</${name}>`).exec(xml)?.[1];
-export const fields = (xml: string, name: string): string[] => [...xml.matchAll(new RegExp(`<${name}>([^<]*)</${name}>`, "g"))].map((m) => m[1] ?? "");
+export const field = (xml: string, name: string): string | undefined => new RegExp(`<(?:ns2:)?${name}>([^<]*)</(?:ns2:)?${name}>`).exec(xml)?.[1];
+export const fields = (xml: string, name: string): string[] => [...xml.matchAll(new RegExp(`<(?:ns2:)?${name}>([^<]*)</(?:ns2:)?${name}>`, "g"))].map((m) => m[1] ?? "");

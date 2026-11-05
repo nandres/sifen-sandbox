@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { modulo11 } from "../src/identifiers.js";
 import { SchemaSet } from "../src/xsd.js";
 import { PATHS, XSD_DIR, buildDocument, createIdentity, envelope, field, recibeRequest, start, type Identity, type Running } from "./helpers.js";
 
@@ -41,9 +42,30 @@ describe("documento válido", () => {
 
   it("la respuesta cumple el esquema oficial del servicio", async () => {
     const { body } = await send();
-    const inner = /<rRetEnviDe[\s\S]*<\/rRetEnviDe>/.exec(body)?.[0] ?? "";
+    const inner = /<ns2:rRetEnviDe[\s\S]*<\/ns2:rRetEnviDe>/.exec(body)?.[0] ?? "";
     const result = await new SchemaSet(XSD_DIR).validate("WS_SiRecepDE_v150.xsd", inner);
     expect(result.errors).toEqual([]);
+  });
+
+  it("responde con el prefijo ns2, como las respuestas reales de la Guía", async () => {
+    const { body } = await send();
+    expect(body).toContain('<ns2:rRetEnviDe xmlns:ns2="http://ekuatia.set.gov.py/sifen/xsd">');
+    expect(body).toContain("<ns2:dCodRes>0260</ns2:dCodRes>");
+  });
+
+  it("acepta pedidos con prefijo en el envoltorio, como los ejemplos de la Guía", async () => {
+    const { xml } = buildDocument(identity);
+    const request =
+      '<soap:Envelope xmlns:soap="http://www.w3.org/2003/05/soap-envelope" xmlns:xsd="http://ekuatia.set.gov.py/sifen/xsd"><soap:Header/><soap:Body>' +
+      `<xsd:rEnviDe><xsd:dId>1</xsd:dId><xsd:xDE>${xml}</xsd:xDE></xsd:rEnviDe></soap:Body></soap:Envelope>`;
+    const response = await sandbox.post(PATHS.recibe, request);
+    expect(field(response.body, "dCodRes")).toBe("0260");
+  });
+
+  it("anota en el historial la leyenda del ambiente oficial de pruebas", async () => {
+    await send();
+    const { json } = await sandbox.control("/requests");
+    expect(json[0].notes[0]).toContain("SIN VALOR COMERCIAL");
   });
 
   it("identifica la respuesta como simulada", async () => {
@@ -90,9 +112,9 @@ describe("forma del mensaje", () => {
     expect(result.code).toBe("0106");
   });
 
-  it("0100 si no cumple el esquema, y dice por qué", async () => {
+  it("0160 si el DE no cumple el esquema, como el ejemplo de la Guía, y dice por qué", async () => {
     const result = await send({ afterSign: (xml) => xml.replace("<dSisFact>1</dSisFact>", "") });
-    expect(result.code).toBe("0100");
+    expect(result.code).toBe("0160");
     expect(field(result.body, "dMsgRes")).toContain("sandbox:");
   });
 
@@ -111,6 +133,28 @@ describe("firma", () => {
   it("0141 si se altera el valor de la firma", async () => {
     const result = await send({ afterSign: (xml) => xml.replace(/<SignatureValue>.{8}/, "<SignatureValue>AAAAAAAA") });
     expect(result.code).toBe("0141");
+  });
+
+  it.each([
+    ["Signature Method", /SignatureMethod Algorithm="[^"]+"/, 'SignatureMethod Algorithm="http://www.w3.org/2000/09/xmldsig#rsa-sha1"'],
+    ["Digest Method", /DigestMethod Algorithm="[^"]+"/, 'DigestMethod Algorithm="http://www.w3.org/2000/09/xmldsig#sha1"'],
+    ["Canonicalization Method", /CanonicalizationMethod Algorithm="[^"]+"/, 'CanonicalizationMethod Algorithm="urn:otro"'],
+  ])("0140 si %s no es el previsto (NT 16)", async (name, from, to) => {
+    const result = await send({ afterSign: (xml) => xml.replace(from, to) });
+    expect(result.code).toBe("0140");
+    expect(field(result.body, "dMsgRes")).toContain(name);
+  });
+
+  it("0120 si el certificado no es válido (NT 16)", async () => {
+    const result = await send({ afterSign: (xml) => xml.replace(/<X509Certificate>[^<]+/, "<X509Certificate>AAAA") });
+    expect(result.code).toBe("0120");
+  });
+
+  it("2450 si el certificado estaba vencido al firmar (NT 16)", async () => {
+    const expired = createIdentity("VENCIDO", { from: "2020-01-01", to: "2021-01-01" });
+    const { xml } = buildDocument(expired);
+    const response = await sandbox.post(PATHS.recibe, recibeRequest(xml));
+    expect(field(response.body, "dCodRes")).toBe("2450");
   });
 
   it("0140 si la referencia no apunta al CDC", async () => {
@@ -189,12 +233,16 @@ describe("emisor y timbrado", () => {
 
   it.each([
     [{ existe: false }, "1250"],
-    [{ facturaElectronica: false }, "1251"],
     [{ estado: "SUS" }, "1252"],
     [{ usaServicioSincrono: false }, "1264"],
   ])("%j da %s", async (state, code) => {
     await sandbox.control("/ruc", { ruc: "80000001", ...state });
     expect((await send()).code).toBe(code);
+  });
+
+  it("la NT 4 eliminó 1251: no bloquea a quien no figura como facturador", async () => {
+    await sandbox.control("/ruc", { ruc: "80000001", facturaElectronica: false });
+    expect((await send()).code).toBe("0260");
   });
 
   it("1050 si se usa contingencia", async () => {
@@ -205,8 +253,8 @@ describe("emisor y timbrado", () => {
     expect((await send({ descTipoEmision: "Contingencia" })).code).toBe("1051");
   });
 
-  it("0100 si la descripción de la emisión no existe: el XSD la frena antes", async () => {
-    expect((await send({ descTipoEmision: "Otra" })).code).toBe("0100");
+  it("0160 si la descripción de la emisión no existe: el XSD la frena antes", async () => {
+    expect((await send({ descTipoEmision: "Otra" })).code).toBe("0160");
   });
 
   it("1100 si la descripción del tipo es válida pero de otro código", async () => {
@@ -230,8 +278,16 @@ describe("QR", () => {
     expect((await send({ csc: "OTRO0000000000000000000000000000" })).code).toBe("2501");
   });
 
-  it("2501 si el IdCSC no está cargado", async () => {
-    expect((await send({ cscId: "0002" })).code).toBe("2501");
+  it("2501 si el IdCSC no está vigente (NT 10)", async () => {
+    expect((await send({ cscId: "0003" })).code).toBe("2501");
+  });
+
+  it("acepta el segundo CSC genérico de la Guía de Pruebas", async () => {
+    expect((await send({ cscId: "0002", csc: "EFGH0000000000000000000000000000" })).code).toBe("0260");
+  });
+
+  it("2502 si la URL usa www: la NT 10 la dejó sin www", async () => {
+    expect((await send({ qrBase: "https://www.ekuatia.set.gov.py/consultas-test/qr?" })).code).toBe("2502");
   });
 
   it("2502 si apunta a producción", async () => {
@@ -245,6 +301,86 @@ describe("QR", () => {
   it("2500 si los datos del QR no coinciden con el XML", async () => {
     const result = await send({ afterSign: (xml) => xml.replace("dTotGralOpe=110000", "dTotGralOpe=110001") });
     expect(result.code).toBe("2500");
+  });
+});
+
+describe("receptor y operación", () => {
+  const receiver = (fields: string): string => `<gDatRec>${fields}<dNomRec>Sin Nombre</dNomRec></gDatRec>`;
+  const PAIS = "<cPaisRec>PRY</cPaisRec><dDesPaisRe>Paraguay</dDesPaisRe>";
+  const INNOMINADO = "<iTipIDRec>5</iTipIDRec><dDTipIDRec>Innominado</dDTipIDRec><dNumIDRec>0</dNumIDRec>";
+  const b2cInnominado = receiver(`<iNatRec>2</iNatRec><iTiOpe>2</iTiOpe>${PAIS}${INNOMINADO}`);
+  const qrReceptor = "dNumIDRec=0";
+
+  it("acepta un consumidor final innominado por debajo del límite", async () => {
+    expect((await send({ receiverXml: b2cInnominado, qrReceptor })).code).toBe("0260");
+  });
+
+  it("1321 desde 7.000.000 en 2025 o después (NT 24)", async () => {
+    expect((await send({ receiverXml: b2cInnominado, qrReceptor, total: "7000000" })).code).toBe("1321");
+    expect((await send({ receiverXml: b2cInnominado, qrReceptor, total: "6999999" })).code).toBe("0260");
+  });
+
+  it("1321 usa 35.000.000 durante 2024 (NT 21)", async () => {
+    sandbox.sandbox.store.setClock("2024-06-01T10:00:00-03:00");
+    const date = { emitted: "2024-06-01T09:00:00" };
+    expect((await send({ ...date, receiverXml: b2cInnominado, qrReceptor, total: "35000000" })).code).toBe("1321");
+    expect((await send({ ...date, receiverXml: b2cInnominado, qrReceptor, total: "34999999" })).code).toBe("0260");
+  });
+
+  it("1321 usa 60.000.000 antes de 2024 (Manual)", async () => {
+    sandbox.sandbox.store.setClock("2023-06-01T10:00:00-03:00");
+    const date = { emitted: "2023-06-01T09:00:00", timbradoStart: "2023-01-01" };
+    expect((await send({ ...date, receiverXml: b2cInnominado, qrReceptor, total: "60000000" })).code).toBe("1321");
+    expect((await send({ ...date, receiverXml: b2cInnominado, qrReceptor, total: "59999999" })).code).toBe("0260");
+  });
+
+  it("1321 no aplica a muestras médicas", async () => {
+    const result = await send({
+      receiverXml: b2cInnominado,
+      qrReceptor,
+      total: "7000000",
+      beforeSign: (xml) => xml.replace("<iTipTra>1</iTipTra><dDesTipTra>Venta de mercadería</dDesTipTra>", "<iTipTra>13</iTipTra><dDesTipTra>Muestras médicas (Art. 3 RG 24/2014)</dDesTipTra>"),
+    });
+    expect(result.code).toBe("0260");
+  });
+
+  it("1333 si innominado no es B2C (NT 23)", async () => {
+    const receiverXml = receiver(`<iNatRec>2</iNatRec><iTiOpe>4</iTiOpe>${PAIS}${INNOMINADO}`);
+    expect((await send({ receiverXml, qrReceptor })).code).toBe("1333");
+  });
+
+  it("1300 si un no contribuyente tiene operación B2B (NT 10)", async () => {
+    const receiverXml = receiver(`<iNatRec>2</iNatRec><iTiOpe>1</iTiOpe>${PAIS}${INNOMINADO}`);
+    expect((await send({ receiverXml, qrReceptor })).code).toBe("1300");
+  });
+
+  it("1335 si un no contribuyente no informa el tipo de documento (NT 23)", async () => {
+    const receiverXml = receiver(`<iNatRec>2</iNatRec><iTiOpe>2</iTiOpe>${PAIS}`);
+    expect((await send({ receiverXml, qrReceptor })).code).toBe("1335");
+  });
+
+  it("1314 si un no contribuyente no informa el número (NT 23)", async () => {
+    const receiverXml = receiver(`<iNatRec>2</iNatRec><iTiOpe>2</iTiOpe>${PAIS}<iTipIDRec>1</iTipIDRec><dDTipIDRec>Cédula paraguaya</dDTipIDRec>`);
+    expect((await send({ receiverXml, qrReceptor })).code).toBe("1314");
+  });
+
+  it("1334 si un contribuyente informa número de documento (NT 23)", async () => {
+    const receiverXml = `<gDatRec><iNatRec>1</iNatRec><iTiOpe>1</iTiOpe>${PAIS}<iTiContRec>2</iTiContRec><dRucRec>80000002</dRucRec><dDVRec>${modulo11("80000002")}</dDVRec><iTipIDRec>1</iTipIDRec><dDTipIDRec>Cédula paraguaya</dDTipIDRec><dNumIDRec>1234567</dNumIDRec><dNomRec>Cliente</dNomRec></gDatRec>`;
+    expect((await send({ receiverXml })).code).toBe("1334");
+  });
+
+  it("1216 si informa tipo de transacción donde no corresponde (NT 6)", async () => {
+    const result = await send({ tipo: "5", descTipo: "Nota de crédito electrónica" });
+    expect(result.code).toBe("1216");
+  });
+
+  it("1213 si una autofactura no está en guaraníes (NT 12)", async () => {
+    const result = await send({
+      tipo: "4",
+      descTipo: "Autofactura electrónica",
+      beforeSign: (xml) => xml.replace("<cMoneOpe>PYG</cMoneOpe><dDesMoneOpe>Guarani</dDesMoneOpe>", "<cMoneOpe>USD</cMoneOpe><dDesMoneOpe>US Dollar</dDesMoneOpe>"),
+    });
+    expect(result.code).toBe("1213");
   });
 });
 

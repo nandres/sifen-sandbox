@@ -1,6 +1,6 @@
 {
   "name": "sifen-sandbox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Simulador local de SIFEN (facturación electrónica de Paraguay) para probar integraciones sin certificado ni habilitación.",
   "license": "MIT",
   "author": "Marcos Arellano",
